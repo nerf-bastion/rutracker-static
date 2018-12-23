@@ -1,4 +1,6 @@
 const fs = require('fs')
+const cluster = require('cluster')
+const sqlite3 = require('sqlite3').verbose()
 
 //  ========================
 // === ОЧИСТКА И СТЕММИНГ ===
@@ -156,6 +158,95 @@ function writeWordsIndex(wordsIndex, suffix) {
 	fs.closeSync(fd)
 }
 
+//  ================================
+// === МНОГОПРОЦЕССНЫЙ ОБХОД БАЗЫ ===
+//  ================================
+
+// Запускает несколько дочерних процессов, в каждом вызывает workerSetUp,
+// и потом handleRow для каждой строки из базы.
+// Каждая строка попадает только в один из воркеров.
+// Читает только значения столбцов fields, среди них ОБЯЗАТЕЛЬНО должен быть id.
+//
+// Пример:
+//	startClusteredDBScanning({
+//		fields: 'id, title, description',
+//		masterSetUp: function(cluster, startWorkers) {
+//			startWorkers({
+//				extraParams: {
+//					smth: 42,
+//				},
+//			})
+//		},
+//		workerSetUp: function(extraParams) {
+//			let smth = extraParams.smth
+//			async function handleRow(row) {
+//				console.log(smth, row.id, row.title, row.description)
+//			}
+//			return { handleRow }
+//		},
+//	})
+//
+function startClusteredDBScanning({ fields, masterSetUp, workerSetUp }) {
+	if (cluster.isMaster) {
+		let numCPUs = require('os').cpus().length
+		for (let i = 0; i < numCPUs; i++) cluster.fork()
+
+		function startWorkers({ extraParams }) {
+			let i = 0
+			for (const id in cluster.workers)
+				cluster.workers[id].send({
+					cmd: 'start',
+					workerNumber: i++,
+					workersCount: Object.keys(cluster.workers).length,
+					extraParams,
+				})
+		}
+
+		masterSetUp(cluster, startWorkers)
+	} else {
+		let db = new sqlite3.Database('../rutracker.db', sqlite3.OPEN_READONLY)
+		let step = 1000
+		let workersCount = null
+		let workerNumber = null
+		let handleRow = null
+
+		process.on('message', function(msg) {
+			if (msg.cmd == 'start') {
+				workersCount = msg.workersCount
+				workerNumber = msg.workerNumber
+				;({ handleRow } = workerSetUp(msg.extraParams))
+				console.log(`worker #${workerNumber}: started`)
+				loadChunk(0, step, onChunkDone)
+			}
+		})
+
+		function loadChunk(fromID, limit, callback) {
+			db.all(
+				`SELECT ${fields} FROM torrents WHERE id > ? AND id % ? = ? ORDER BY id LIMIT ?`,
+				[fromID, workersCount, workerNumber, limit],
+				function(err, rows) {
+					if (err !== null) throw err
+					for (let i = 0; i < rows.length; i++)
+						handleRow(rows[i]).catch(err => {
+							throw err
+						})
+					let lastID = rows.length == 0 ? null : rows[rows.length - 1].id
+					callback(lastID)
+				},
+			)
+		}
+
+		function onChunkDone(lastID) {
+			if (lastID === null) {
+				console.log(`worker #${workerNumber}: done`)
+				process.exit(0)
+			} else {
+				loadChunk(lastID, step, onChunkDone)
+			}
+		}
+	}
+}
+
 //  ============
 // === ВСЯКОЕ ===
 //  ============
@@ -205,6 +296,7 @@ module.exports = {
 	wordsIndexSerialize,
 	wordsIndexDeserialize,
 	writeWordsIndex,
+	startClusteredDBScanning,
 	mkdirIfExistsSync,
 	unlinkIfNotExistsSync,
 	processIsRunning,
