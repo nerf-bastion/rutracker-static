@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "./node_modules/.bin/webpack --mode=production",
-    "extract-search-words": "node --max-old-space-size=4096 scripts/update_words_index.js",
+    "extract-search-words": "node --max-old-space-size=4096 scripts/extract_search_words.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",

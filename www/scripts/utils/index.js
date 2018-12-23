@@ -4,14 +4,18 @@ const fs = require('fs')
 // === ОЧИСТКА И СТЕММИНГ ===
 //  ========================
 
+const KEEP_NON_IMG_URLS = false
+
 let _tags = 'u i b s color font spoiler align url size quote list code box pre'
-let contentTags = new Set(_tags.split(' '))
-let cutoffTags = new Set('img'.split(' '))
+let contentBBTags = new Set(_tags.split(' '))
+_tags = 'b u h3 li ul a div span var pre table tr td path name disabled array dict key string'
+let contentHTMLTags = new Set(_tags.split(' '))
 
 function cleanupDescription(descr) {
 	descr = unescapeHTMLCodes(descr)
+
 	// вырезаение BB-кодов
-	descr = descr.replace(/\[hr\]/g, '')
+	descr = descr.replace(/\[[hb]r\]/g, '')
 	// они бывают вложенные; вырезаем, пока не кончатся
 	for (let found = true; found; ) {
 		found = false
@@ -20,16 +24,49 @@ function cleanupDescription(descr) {
 			(all, name, value, content) => {
 				found = true
 				name = name.toLowerCase()
-				if (contentTags.has(name)) return content
-				if (cutoffTags.has(name)) return ''
-				//console.log('!!! ' + name + ' ' + all)
-				return name + (value === undefined ? '' : value) + content
+				if (KEEP_NON_IMG_URLS && name == 'url') return value + ' ' + content
+				if (name == 'img') return ''
+				if (contentBBTags.has(name)) return content
+				return name + ' ' + (value || '') + ' ' + content
 			},
 		)
 	}
+
+	// вырезаение HTML-тегов
+	descr = descr.replace(/<[hb]r\s*\/>/g, '')
+	for (let found = true; found; ) {
+		found = false
+		descr = descr.replace(
+			/<(\w+?)(\s+[^>]+)?>([\s\S]*?)<\/\1>/g,
+			(all, name, attrs, content) => {
+				found = true
+				name = name.toLowerCase()
+				if (name == 'img') return ''
+				if (KEEP_NON_IMG_URLS && name == 'a') {
+					let m = attrs.match(/href="(.*?)"/)
+					return (m ? m[1] : '') + ' ' + content
+				}
+				if (contentHTMLTags.has(name)) return content
+				return name + ' ' + (attrs || '') + ' ' + content
+			},
+		)
+	}
+
+	//вырезаение ссылок на смайлики
+	descr = descr.replace(/https?:\/\/static\.rutracker\.org\/smiles\/\S*/g, '')
 	//вырезаение ссылок на imageshack (никто же не будет искать торрент по адресу картинки?)
 	descr = descr.replace(/https?:\/\/img\d+\.imageshack.us\S*/g, '')
-	//if (descr.match(/\[\w+(=.*?)?\]/)) throw new Error(descr)
+	//вырезаение ссылок на tinypic
+	descr = descr.replace(/https?:\/\/i\d+\.tinypic\.com\/\w+\.jpe?g/g, '')
+	// какие-то страныне ссылки типа http://i3.fastpic.ru/big/2009/1023/d0/49cd692e914b8...5565eee022d0.png
+	descr = descr.replace(/https?:\/\/i\d+\.fastpic\.ru\/big\/[\/\w]+\.\.\.\w+\.(png|jpe?g)/g, '')
+	// ipicture.ru
+	descr = descr.replace(/https?:\/\/ipicture\.ru\/uploads\/[\/\w]+\.(png|jpe?g)/g, '')
+	// k.foto.radikal.ru
+	descr = descr.replace(/https?:\/\/k\.foto\.radikal\.ru\/[\/\w]+\.(png|jpe?g)/g, '')
+
+	// let m = descr.match(/https?:\/\/\S+/g)
+	// if (m) console.log(m.join('\n'))
 	return descr
 }
 
@@ -86,14 +123,12 @@ function indexItemDeserialize(buf, pos) {
 // про {слово и список айди} см. в indexItemSerialize
 function wordsIndexBytesSize(wordsIndex) {
 	let size = 4
-	for (let [word, torrentIDs] of wordsIndex)
-		size += indexItemBytesSize(word, torrentIDs)
+	for (let [word, torrentIDs] of wordsIndex) size += indexItemBytesSize(word, torrentIDs)
 	return size
 }
 function wordsIndexSerialize(buf, pos, wordsIndex) {
 	pos = buf.writeInt32LE(wordsIndex.size, pos)
-	for (let [word, torrentIDs] of wordsIndex)
-		pos = indexItemSerialize(buf, pos, word, torrentIDs)
+	for (let [word, torrentIDs] of wordsIndex) pos = indexItemSerialize(buf, pos, word, torrentIDs)
 	return pos
 }
 function wordsIndexDeserialize(buf, pos, wordsIndex) {
@@ -164,6 +199,9 @@ function sleep(mills) {
 module.exports = {
 	cleanupDescription,
 	unescapeHTMLCodes,
+	indexItemBytesSize,
+	indexItemSerialize,
+	indexItemDeserialize,
 	wordsIndexSerialize,
 	wordsIndexDeserialize,
 	writeWordsIndex,

@@ -4,24 +4,13 @@ const shm = require('shm-typed-array')
 const fs = require('fs')
 
 const utils = require('./utils')
-const { mkdirIfExistsSync, unlinkIfNotExistsSync, processIsRunning } = utils
+const { mkdirIfExistsSync, unlinkIfNotExistsSync } = utils
 const { wordsIndexDeserialize, wordsIndexSerialize, writeWordsIndex } = utils
 const { cleanupDescription, sleep } = utils
 const { splitTextToLexemes } = require('./utils/common')
 
 // TODO: 12.2007г, 2007.12.01 и т.д.
 // TODO: https://ru.wikipedia.org/wiki/Мнемоники_в_HTML
-
-// let t = new Map()
-// t.set('qwe', new Set([1, 2, 3]))
-// t.set('asd', new Set([1, 2, 3, 4, 5]))
-// let b = Buffer.allocUnsafe(wordsIndexBytesSize(t))
-// let p = wordsIndexSerialize(b, 0, t)
-// console.log(t, p, b.length, b)
-// t = new Map()
-// let r = wordsIndexDeserialize(b, 0, t)
-// console.log(b, p, r, t)
-// process.exit(1)
 
 mkdirIfExistsSync('gen')
 unlinkIfNotExistsSync('gen/lockfile')
@@ -86,7 +75,7 @@ if (cluster.isMaster) {
 	//  ============
 	// === ВОРКЕР ===
 	//  ============
-	let db = new sqlite3.Database('../db3/rutracker.db', sqlite3.OPEN_READONLY)
+	let db = new sqlite3.Database('../rutracker.db', sqlite3.OPEN_READONLY)
 	let step = 1000
 	let workersCount = null
 	let workerNumber = null
@@ -152,7 +141,7 @@ if (cluster.isMaster) {
 	function loadChunk(fromID, limit, callback) {
 		let lastID = null
 		db.each(
-			'SELECT id, title, description, source FROM torrents WHERE id > ? AND id % ? = ? AND source like "%.xml" ORDER BY id LIMIT ?',
+			'SELECT id, title, description, source FROM torrents WHERE id > ? AND id % ? = ? ORDER BY id LIMIT ?',
 			[fromID, workersCount, workerNumber, limit],
 			function callback(err, row) {
 				if (err !== null) throw err
